@@ -96,6 +96,7 @@ export async function resolveRepoRoot(input: string): Promise<string> {
 export async function readCommits(
   repoRoot: string,
   limit: number,
+  skip = 0,
 ): Promise<Commit[]> {
   // `git log` fails with a long "Command failed" message on an unborn branch.
   // Checking HEAD first lets us give the user a direct explanation instead.
@@ -126,6 +127,8 @@ export async function readCommits(
       "log",
       "--no-merges",
       "--no-renames",
+      "--skip",
+      String(skip),
       "-n",
       String(limit),
       `--pretty=format:${format}`,
