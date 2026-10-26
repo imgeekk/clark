@@ -132,12 +132,26 @@ function runGit(args: string[]): Promise<string> {
   });
 }
 
+type GitFailure = Error & {
+  code?: string | number;
+  stderr?: string;
+};
+
+function describeGitError(error: unknown): string {
+  if (error instanceof Error) {
+    const gitError = error as GitFailure;
+    return gitError.stderr?.trim() || gitError.message;
+  }
+
+  return String(error);
+}
+
 async function resolveRepoRoot(input: string): Promise<string> {
   try {
     const stdout = await runGit(["-C", input, "rev-parse", "--show-toplevel"]);
     return stdout.trim();
   } catch (error) {
-    const gitError = error as NodeJS.ErrnoException & { stderr?: string };
+    const gitError = error as GitFailure;
 
     if (gitError.code === "ENOENT") {
       throw new Error("git was not found on PATH.");
@@ -151,25 +165,47 @@ async function resolveRepoRoot(input: string): Promise<string> {
 }
 
 async function readCommits(repoRoot: string, limit: number): Promise<Commit[]> {
+  // `git log` fails with a long "Command failed" message on an unborn branch.
+  // Checking HEAD first lets us give the user a direct explanation instead.
+  try {
+    await runGit(["-C", repoRoot, "rev-parse", "--verify", "--quiet", "HEAD"]);
+  } catch (error) {
+    const gitError = error as GitFailure;
+
+    if (gitError.code === 1) {
+      throw new Error(`Repository has no commits yet: ${repoRoot}`);
+    }
+
+    throw new Error(
+      `Could not read repository HEAD: ${repoRoot}\n${describeGitError(error)}`,
+    );
+  }
+
   // Use control characters as separators so multi-line commit messages
   // cannot be confused with the file list that follows.
   // %cI is the committer date, which matches git log's ordering. The author
   // date (%aI) can be older after a rebase or cherry-pick.
   const format = "%x1e%H%x1f%an%x1f%cI%x1f%B%x1f";
 
-  const stdout = await runGit([
-    "-C",
-    repoRoot,
-    "log",
-    "--no-merges",
-    "--no-renames",
-    "-n",
-    String(limit),
-    `--pretty=format:${format}`,
-    "--name-only",
-  ]);
+  try {
+    const stdout = await runGit([
+      "-C",
+      repoRoot,
+      "log",
+      "--no-merges",
+      "--no-renames",
+      "-n",
+      String(limit),
+      `--pretty=format:${format}`,
+      "--name-only",
+    ]);
 
-  return parseLog(stdout);
+    return parseLog(stdout);
+  } catch (error) {
+    throw new Error(
+      `git log failed in ${repoRoot}\n${describeGitError(error)}`,
+    );
+  }
 }
 
 function parseLog(output: string): Commit[] {
