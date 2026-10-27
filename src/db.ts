@@ -27,6 +27,10 @@ export type EmbeddedDecisionRow = DecisionRow & {
   embedding_dim: number;
 };
 
+export type DecisionPathRow = DecisionRow & {
+  matched_path: string;
+};
+
 export type DecisionForEmbedding = {
   id: number;
   title: string;
@@ -217,8 +221,8 @@ export function storeProcessedCommit(
   extraction: Extraction | null,
   affectedPaths: string[],
   force: boolean,
-): void {
-  const transaction = db.transaction(() => {
+): number[] {
+  return db.transaction(() => {
     if (force) {
       deleteCommit(db, commit.sha);
     }
@@ -242,12 +246,15 @@ export function storeProcessedCommit(
       new Date().toISOString(),
     );
 
+    const decisionIds: number[] = [];
     if (extraction?.is_decision) {
-      storeDecision(db, commit.sha, extraction, affectedPaths);
+      decisionIds.push(
+        storeDecision(db, commit.sha, extraction, affectedPaths),
+      );
     }
-  });
 
-  transaction();
+    return decisionIds;
+  })();
 }
 
 export function getStats(db: Db): {
@@ -352,4 +359,64 @@ export function getEmbeddedDecisions(
        ORDER BY d.id`,
     )
     .all(model, dim) as EmbeddedDecisionRow[];
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
+export function getDecisionsForPath(
+  db: Db,
+  path: string,
+  limit: number,
+): DecisionRow[] {
+  const like = `${escapeLike(path)}/%`;
+
+  return db
+    .prepare(
+      `SELECT d.id, d.title, d.summary, d.rationale, d.reason_quote,
+              d.evidence_type, d.confidence,
+              c.sha AS commit_sha, c.committed_at, c.author,
+              (SELECT GROUP_CONCAT(df2.path, char(31))
+               FROM decision_files df2
+               WHERE df2.decision_id = d.id) AS paths
+       FROM decision_files df
+       JOIN decisions d ON d.id = df.decision_id
+       JOIN decision_commits dc ON dc.decision_id = d.id
+       JOIN commits c ON c.sha = dc.commit_sha
+       WHERE df.path = ? OR df.path LIKE ? ESCAPE '\\'
+       ORDER BY julianday(c.committed_at) DESC, d.confidence DESC, d.id DESC
+       LIMIT ?`,
+    )
+    .all(path, like, limit) as DecisionRow[];
+}
+
+export function getDecisionsForPaths(
+  db: Db,
+  paths: string[],
+): DecisionPathRow[] {
+  const unique = [...new Set(paths)].slice(0, 50);
+  if (unique.length === 0) {
+    return [];
+  }
+
+  const placeholders = unique.map(() => "?").join(", ");
+
+  return db
+    .prepare(
+      `SELECT d.id, d.title, d.summary, d.rationale, d.reason_quote,
+              d.evidence_type, d.confidence,
+              c.sha AS commit_sha, c.committed_at, c.author,
+              df.path AS matched_path,
+              (SELECT GROUP_CONCAT(df2.path, char(31))
+               FROM decision_files df2
+               WHERE df2.decision_id = d.id) AS paths
+       FROM decision_files df
+       JOIN decisions d ON d.id = df.decision_id
+       JOIN decision_commits dc ON dc.decision_id = d.id
+       JOIN commits c ON c.sha = dc.commit_sha
+       WHERE df.path IN (${placeholders})
+       ORDER BY julianday(c.committed_at) DESC, d.confidence DESC, d.id DESC`,
+    )
+    .all(...unique) as DecisionPathRow[];
 }

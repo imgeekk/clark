@@ -4,10 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "tsx --test src/verify.test.ts src/git.test.ts src/embeddings.test.ts",
+    "test": "tsx --test src/verify.test.ts src/git.test.ts src/embeddings.test.ts src/retrieval.test.ts",
     "ingest": "tsx src/ingest.ts",
     "extract": "tsx src/extract.ts",
     "index": "tsx src/indexer.ts",
+    "why": "tsx src/why.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],
