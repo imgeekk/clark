@@ -16,6 +16,7 @@ import {
   readCommits,
   resolveRepoRoot,
   type Commit,
+  type SkipReason,
 } from "./git.js";
 import {
   databasePath,
@@ -24,6 +25,7 @@ import {
   openDatabase,
   storeProcessedCommit,
 } from "./db.js";
+import { resolveAffectedPaths, verifyExtraction } from "./verify.js";
 
 const DEFAULT_LIMIT = 100;
 const DEFAULT_BATCH_SIZE = 5;
@@ -147,109 +149,6 @@ function parseArgs(argv: string[]): Options {
   return { repoPath, limit, offset, batchSize, model, force };
 }
 
-function normalizePath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-}
-
-function resolveAffectedPaths(
-  commit: Commit,
-  affectedPaths: string[],
-): { paths: string[]; dropped: string[] } {
-  const files = new Set(commit.files);
-  const normalized = [
-    ...new Set(affectedPaths.map(normalizePath).filter(Boolean)),
-  ];
-  const valid = normalized.filter((path) => files.has(path));
-  const dropped = normalized.filter((path) => !files.has(path));
-
-  // If the model returned no usable paths, keep the commit's full file list
-  // so path-based lookups can still find the decision.
-  if (valid.length > 0) {
-    return { paths: valid, dropped };
-  }
-
-  return { paths: commit.files, dropped };
-}
-
-const REASON_MARKERS =
-  /\b(because|since|so that|so|to avoid|to fix|to handle|to prevent|to support|to make|to keep|to ensure|to reduce|to improve|to match|to align|to work around|due to|in order to|for|when|broke|breaks|broken|regression|crash|crashes|fails|failing|incompatible|deprecated|removed|removes|workaround|instead|rather than|otherwise|without)\b/i;
-
-function normalizeWhitespace(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function normalizeExtraction(
-  extraction: Extraction,
-  commit: Commit,
-): { extraction: Extraction; warning?: string } {
-  if (!extraction.is_decision) {
-    return {
-      extraction: {
-        is_decision: false,
-        title: "",
-        summary: "",
-        rationale: "",
-        reason_quote: "",
-        evidence: "none",
-        confidence: 0,
-        affected_paths: [],
-      },
-    };
-  }
-
-  if (extraction.evidence === "none") {
-    throw new Error("Decision has evidence 'none'.");
-  }
-
-  const title = extraction.title.trim();
-  const summary = extraction.summary.trim();
-  const rationale = extraction.rationale.trim();
-
-  if (!title || !summary || !rationale) {
-    throw new Error("Decision is missing title, summary, or rationale.");
-  }
-
-  let evidence = extraction.evidence;
-  let confidence = extraction.confidence;
-  let reasonQuote = extraction.reason_quote.trim();
-  let warning: string | undefined;
-
-  if (evidence === "stated") {
-    const message = normalizeWhitespace(commit.message).toLowerCase();
-    const quote = normalizeWhitespace(reasonQuote).toLowerCase();
-    const isSubstring = quote.length >= 8 && message.includes(quote);
-    const looksCausal = REASON_MARKERS.test(quote);
-
-    if (!isSubstring || !looksCausal) {
-      warning =
-        "stated evidence had no valid causal reason_quote; downgraded to inferred";
-      evidence = "inferred";
-      confidence = Math.min(confidence, 0.7);
-      reasonQuote = "";
-    }
-  } else {
-    reasonQuote = "";
-  }
-
-  // Enforce the moderate-scope policy even if the model ignores the prompt.
-  if (evidence === "inferred") {
-    confidence = Math.min(confidence, 0.7);
-  }
-
-  return {
-    extraction: {
-      ...extraction,
-      title,
-      summary,
-      rationale,
-      reason_quote: reasonQuote,
-      evidence,
-      confidence,
-    },
-    warning,
-  };
-}
-
 function chunkItems(
   items: BatchItem[],
   maxSize: number,
@@ -291,7 +190,18 @@ async function main(): Promise<void> {
 
   try {
     const commits = await readCommits(repoRoot, options.limit, options.offset);
-    const kept = commits.filter((commit) => classifyCommit(commit) === null);
+    const kept: Commit[] = [];
+    const skipped = new Map<SkipReason, number>();
+
+    for (const commit of commits) {
+      const reason = classifyCommit(commit);
+      if (reason === null) {
+        kept.push(commit);
+      } else {
+        skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
+      }
+    }
+
     const indexed = getIndexedShas(
       db,
       kept.map((commit) => commit.sha),
@@ -303,8 +213,14 @@ async function main(): Promise<void> {
     console.error(`Repo: ${repoRoot}`);
     console.error(`Database: ${databasePath(repoRoot)}`);
     console.error(`Model: ${options.model}`);
+    const skipSummary =
+      skipped.size === 0
+        ? "none"
+        : [...skipped.entries()]
+            .map(([reason, count]) => `${reason}=${count}`)
+            .join(", ");
     console.error(
-      `Scanned ${commits.length} non-merge commits (offset ${options.offset}), kept ${kept.length}, already indexed ${indexed.size}, to process ${todo.length}`,
+      `Scanned ${commits.length} non-merge commits (offset ${options.offset}), skipped ${commits.length - kept.length} (${skipSummary}), kept ${kept.length}, already indexed ${indexed.size}, to process ${todo.length}`,
     );
 
     if (todo.length === 0) {
@@ -364,7 +280,7 @@ async function main(): Promise<void> {
             throw new Error(`Missing result for ${item.commit.sha}.`);
           }
 
-          const normalized = normalizeExtraction(extraction, item.commit);
+          const normalized = verifyExtraction(extraction, item.commit);
           const { paths, dropped } = resolveAffectedPaths(
             item.commit,
             normalized.extraction.affected_paths,
@@ -389,6 +305,16 @@ async function main(): Promise<void> {
           if (entry.dropped.length > 0) {
             console.error(
               `  warning ${entry.item.commit.sha.slice(0, 7)}: dropped paths not in commit: ${entry.dropped.join(", ")}`,
+            );
+          }
+
+          if (
+            entry.normalized.is_decision &&
+            entry.paths.length === 0 &&
+            entry.dropped.length === 0
+          ) {
+            console.error(
+              `  warning ${entry.item.commit.sha.slice(0, 7)}: decision has no affected paths`,
             );
           }
 
