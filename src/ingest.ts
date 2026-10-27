@@ -90,8 +90,10 @@ function printSummary(
   skipped: Record<SkipReason, number>,
   log: (message: string) => void,
 ): void {
-  const skippedTotal =
-    skipped.empty + skipped["lockfile-only"] + skipped["generated-only"];
+  const skippedTotal = Object.values(skipped).reduce(
+    (total, count) => total + count,
+    0,
+  );
   const breakdown = (Object.entries(skipped) as Array<[SkipReason, number]>)
     .filter(([, count]) => count > 0)
     .map(([reason, count]) => `${reason} ${count}`)
@@ -114,6 +116,10 @@ async function main(): Promise<void> {
     empty: 0,
     "lockfile-only": 0,
     "generated-only": 0,
+    "docs-only": 0,
+    "ci-only": 0,
+    "test-only": 0,
+    "non-code-only": 0,
   };
 
   for (const commit of commits) {

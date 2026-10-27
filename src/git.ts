@@ -10,7 +10,14 @@ export type Commit = {
   files: string[];
 };
 
-export type SkipReason = "empty" | "lockfile-only" | "generated-only";
+export type SkipReason =
+  | "empty"
+  | "lockfile-only"
+  | "generated-only"
+  | "docs-only"
+  | "ci-only"
+  | "test-only"
+  | "non-code-only";
 
 const LOCKFILES = new Set([
   "package-lock.json",
@@ -43,6 +50,70 @@ const GENERATED_DIRS = [
 ];
 
 const GENERATED_SUFFIXES = [".min.js", ".min.css", ".map"];
+
+const DOCS_DIRS = [
+  "docs/",
+  "doc/",
+  "documentation/",
+  ".github/issue_template/",
+];
+
+const DOC_EXTENSIONS = [".md", ".mdx", ".rst", ".markdown"];
+
+const DOC_BASENAMES = new Set([
+  "readme",
+  "license",
+  "licence",
+  "copying",
+  "changelog",
+  "contributing",
+  "authors",
+  "notice",
+  "code_of_conduct",
+]);
+
+const CI_DIRS = [
+  ".github/workflows/",
+  ".github/actions/",
+  ".circleci/",
+  ".buildkite/",
+];
+
+const CI_FILES = new Set([
+  ".gitlab-ci.yml",
+  ".travis.yml",
+  "azure-pipelines.yml",
+  "appveyor.yml",
+  "bitbucket-pipelines.yml",
+  "cloudbuild.yaml",
+  "jenkinsfile",
+  ".drone.yml",
+]);
+
+const TEST_DIRS = [
+  "test/",
+  "tests/",
+  "__tests__/",
+  "spec/",
+  "specs/",
+  "__mocks__/",
+  "__snapshots__/",
+  "bench/",
+  "benchmarks/",
+  "testdata/",
+  "e2e/",
+  "cypress/",
+  "playwright/",
+];
+
+const TEST_CONFIG_PREFIXES = [
+  "jest.config.",
+  "vitest.config.",
+  "karma.conf.",
+  "playwright.config.",
+  "cypress.config.",
+  ".mocharc",
+];
 
 function runGit(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -242,6 +313,91 @@ function isGenerated(filePath: string): boolean {
   return GENERATED_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
 }
 
+function normalizedLowerPath(filePath: string): string {
+  return filePath
+    .replace(/\\/g, "/")
+    .replace(/^(\.\/)+/, "")
+    .toLowerCase();
+}
+
+function isDocs(filePath: string): boolean {
+  const normalized = normalizedLowerPath(filePath);
+
+  if (
+    DOCS_DIRS.some(
+      (dir) => normalized === dir.slice(0, -1) || normalized.startsWith(dir),
+    )
+  ) {
+    return true;
+  }
+
+  const name = basename(normalized);
+
+  if (DOC_EXTENSIONS.some((extension) => name.endsWith(extension))) {
+    return true;
+  }
+
+  const dot = name.lastIndexOf(".");
+  if (dot === -1) {
+    return DOC_BASENAMES.has(name);
+  }
+
+  const stem = name.slice(0, dot);
+  return name.endsWith(".txt") && DOC_BASENAMES.has(stem);
+}
+
+function isCi(filePath: string): boolean {
+  const normalized = normalizedLowerPath(filePath);
+
+  if (
+    CI_DIRS.some(
+      (dir) => normalized === dir.slice(0, -1) || normalized.startsWith(dir),
+    )
+  ) {
+    return true;
+  }
+
+  return CI_FILES.has(basename(normalized));
+}
+
+function isTest(filePath: string): boolean {
+  const normalized = normalizedLowerPath(filePath);
+
+  if (
+    TEST_DIRS.some(
+      (dir) => normalized === dir.slice(0, -1) || normalized.startsWith(dir),
+    )
+  ) {
+    return true;
+  }
+
+  const name = basename(normalized);
+
+  if (TEST_CONFIG_PREFIXES.some((prefix) => name.startsWith(prefix))) {
+    return true;
+  }
+
+  if (name.endsWith(".snap")) {
+    return true;
+  }
+
+  return (
+    /\.(test|spec)\.[^.]+$/.test(name) ||
+    /_(test|spec)\.[^.]+$/.test(name) ||
+    /^test_.+\.py$/.test(name)
+  );
+}
+
+function isNonCode(filePath: string): boolean {
+  return (
+    isLockfile(filePath) ||
+    isGenerated(filePath) ||
+    isDocs(filePath) ||
+    isCi(filePath) ||
+    isTest(filePath)
+  );
+}
+
 export function classifyCommit(commit: Commit): SkipReason | null {
   if (commit.files.length === 0) {
     return "empty";
@@ -253,6 +409,22 @@ export function classifyCommit(commit: Commit): SkipReason | null {
 
   if (commit.files.every((file) => isLockfile(file) || isGenerated(file))) {
     return "generated-only";
+  }
+
+  if (commit.files.every(isDocs)) {
+    return "docs-only";
+  }
+
+  if (commit.files.every(isCi)) {
+    return "ci-only";
+  }
+
+  if (commit.files.every(isTest)) {
+    return "test-only";
+  }
+
+  if (commit.files.every(isNonCode)) {
+    return "non-code-only";
   }
 
   return null;

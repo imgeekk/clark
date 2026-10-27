@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "tsx --test src/verify.test.ts src/git.test.ts",
     "ingest": "tsx src/ingest.ts",
     "extract": "tsx src/extract.ts",
     "index": "tsx src/indexer.ts",
