@@ -26,6 +26,13 @@ import {
   storeProcessedCommit,
 } from "./db.js";
 import { resolveAffectedPaths, verifyExtraction } from "./verify.js";
+import { ensureDecisionEmbeddings } from "./embedder.js";
+import {
+  DEFAULT_EMBEDDING_BATCH_SIZE,
+  DEFAULT_EMBEDDING_DIM,
+  DEFAULT_EMBEDDING_LIMIT,
+  DEFAULT_EMBEDDING_MODEL,
+} from "./embeddings.js";
 
 const DEFAULT_LIMIT = 100;
 const DEFAULT_BATCH_SIZE = 5;
@@ -46,6 +53,7 @@ function usage(): string {
     "Usage: npx tsx src/indexer.ts [repo-path] [options]",
     "",
     "Index git history into <repo>/.repo-memory/db.sqlite.",
+    "Also embeds decisions that do not have a current embedding.",
     "",
     "Options:",
     `  --limit <n>       Non-merge commits to scan (default: ${DEFAULT_LIMIT})`,
@@ -213,6 +221,9 @@ async function main(): Promise<void> {
     console.error(`Repo: ${repoRoot}`);
     console.error(`Database: ${databasePath(repoRoot)}`);
     console.error(`Model: ${options.model}`);
+    console.error(
+      `Embedding model: ${DEFAULT_EMBEDDING_MODEL} (${DEFAULT_EMBEDDING_DIM}d)`,
+    );
     const skipSummary =
       skipped.size === 0
         ? "none"
@@ -223,133 +234,162 @@ async function main(): Promise<void> {
       `Scanned ${commits.length} non-merge commits (offset ${options.offset}), skipped ${commits.length - kept.length} (${skipSummary}), kept ${kept.length}, already indexed ${indexed.size}, to process ${todo.length}`,
     );
 
-    if (todo.length === 0) {
-      const stats = getStats(db);
-      console.error(
-        `Nothing to do. DB has ${stats.commits} commits and ${stats.decisions} decisions.`,
-      );
-      return;
-    }
-
-    const items: BatchItem[] = [];
-    for (const commit of todo) {
-      const diff = await getCommitDiff(repoRoot, commit.sha, MAX_DIFF_CHARS);
-      items.push({ commit, diff });
-    }
-
-    const batches = chunkItems(items, options.batchSize, MAX_BATCH_DIFF_CHARS);
     const ai = createGeminiClient(apiKey);
     let processed = 0;
     let decisionCount = 0;
     let nonDecisionCount = 0;
     let failureCount = 0;
 
-    for (const [batchIndex, batch] of batches.entries()) {
-      const shas = batch
-        .map((item) => item.commit.sha.slice(0, 7))
-        .join(", ");
-      console.error(
-        `\nBatch ${batchIndex + 1}/${batches.length}: ${batch.length} commit(s) [${shas}]`,
+    if (todo.length > 0) {
+      const items: BatchItem[] = [];
+      for (const commit of todo) {
+        const diff = await getCommitDiff(repoRoot, commit.sha, MAX_DIFF_CHARS);
+        items.push({ commit, diff });
+      }
+
+      const batches = chunkItems(
+        items,
+        options.batchSize,
+        MAX_BATCH_DIFF_CHARS,
       );
 
-      let raw = "";
+      for (const [batchIndex, batch] of batches.entries()) {
+        const shas = batch
+          .map((item) => item.commit.sha.slice(0, 7))
+          .join(", ");
+        console.error(
+          `\nBatch ${batchIndex + 1}/${batches.length}: ${batch.length} commit(s) [${shas}]`,
+        );
 
-      try {
-        let results: Map<string, Extraction>;
+        let raw = "";
 
-        if (batch.length === 1) {
-          const item = batch[0];
-          raw = await requestSingleExtraction(
-            ai,
-            options.model,
-            item.commit,
-            item.diff,
-          );
-          results = new Map([[item.commit.sha, parseExtraction(raw)]]);
-        } else {
-          raw = await requestBatchExtraction(ai, options.model, batch);
-          results = parseBatchExtraction(
-            raw,
-            batch.map((item) => item.commit.sha),
-          );
-        }
+        try {
+          let results: Map<string, Extraction>;
 
-        const prepared = batch.map((item) => {
-          const extraction = results.get(item.commit.sha);
-          if (!extraction) {
-            throw new Error(`Missing result for ${item.commit.sha}.`);
-          }
-
-          const normalized = verifyExtraction(extraction, item.commit);
-          const { paths, dropped } = resolveAffectedPaths(
-            item.commit,
-            normalized.extraction.affected_paths,
-          );
-
-          return {
-            item,
-            normalized: normalized.extraction,
-            warning: normalized.warning,
-            paths,
-            dropped,
-          };
-        });
-
-        for (const entry of prepared) {
-          if (entry.warning) {
-            console.error(
-              `  warning ${entry.item.commit.sha.slice(0, 7)}: ${entry.warning}`,
+          if (batch.length === 1) {
+            const item = batch[0];
+            raw = await requestSingleExtraction(
+              ai,
+              options.model,
+              item.commit,
+              item.diff,
             );
-          }
-
-          if (entry.dropped.length > 0) {
-            console.error(
-              `  warning ${entry.item.commit.sha.slice(0, 7)}: dropped paths not in commit: ${entry.dropped.join(", ")}`,
-            );
-          }
-
-          if (
-            entry.normalized.is_decision &&
-            entry.paths.length === 0 &&
-            entry.dropped.length === 0
-          ) {
-            console.error(
-              `  warning ${entry.item.commit.sha.slice(0, 7)}: decision has no affected paths`,
-            );
-          }
-
-          storeProcessedCommit(
-            db,
-            entry.item.commit,
-            options.model,
-            entry.normalized,
-            entry.paths,
-            options.force,
-          );
-
-          processed += 1;
-          if (entry.normalized.is_decision) {
-            decisionCount += 1;
+            results = new Map([[item.commit.sha, parseExtraction(raw)]]);
           } else {
-            nonDecisionCount += 1;
+            raw = await requestBatchExtraction(ai, options.model, batch);
+            results = parseBatchExtraction(
+              raw,
+              batch.map((item) => item.commit.sha),
+            );
           }
-        }
-      } catch (error) {
-        failureCount += batch.length;
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`  batch failed: ${message}`);
-        if (raw) {
-          console.error(`  raw response:\n${raw}`);
+
+          const prepared = batch.map((item) => {
+            const extraction = results.get(item.commit.sha);
+            if (!extraction) {
+              throw new Error(`Missing result for ${item.commit.sha}.`);
+            }
+
+            const normalized = verifyExtraction(extraction, item.commit);
+            const { paths, dropped } = resolveAffectedPaths(
+              item.commit,
+              normalized.extraction.affected_paths,
+            );
+
+            return {
+              item,
+              normalized: normalized.extraction,
+              warning: normalized.warning,
+              paths,
+              dropped,
+            };
+          });
+
+          for (const entry of prepared) {
+            if (entry.warning) {
+              console.error(
+                `  warning ${entry.item.commit.sha.slice(0, 7)}: ${entry.warning}`,
+              );
+            }
+
+            if (entry.dropped.length > 0) {
+              console.error(
+                `  warning ${entry.item.commit.sha.slice(0, 7)}: dropped paths not in commit: ${entry.dropped.join(", ")}`,
+              );
+            }
+
+            if (
+              entry.normalized.is_decision &&
+              entry.paths.length === 0 &&
+              entry.dropped.length === 0
+            ) {
+              console.error(
+                `  warning ${entry.item.commit.sha.slice(0, 7)}: decision has no affected paths`,
+              );
+            }
+
+            storeProcessedCommit(
+              db,
+              entry.item.commit,
+              options.model,
+              entry.normalized,
+              entry.paths,
+              options.force,
+            );
+
+            processed += 1;
+            if (entry.normalized.is_decision) {
+              decisionCount += 1;
+            } else {
+              nonDecisionCount += 1;
+            }
+          }
+        } catch (error) {
+          failureCount += batch.length;
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`  batch failed: ${message}`);
+          if (raw) {
+            console.error(`  raw response:\n${raw}`);
+          }
         }
       }
+    } else {
+      console.error("Nothing new to index.");
+    }
+
+    try {
+      const embeddingResult = await ensureDecisionEmbeddings(db, ai, {
+        model: DEFAULT_EMBEDDING_MODEL,
+        dim: DEFAULT_EMBEDDING_DIM,
+        batchSize: DEFAULT_EMBEDDING_BATCH_SIZE,
+        limit: DEFAULT_EMBEDDING_LIMIT,
+        onProgress: (done, total) => {
+          console.error(`  embedded ${done}/${total} decision(s)`);
+        },
+      });
+
+      if (embeddingResult.embedded === 0 && embeddingResult.remaining === 0) {
+        console.error("Embeddings: up to date.");
+      } else {
+        console.error(
+          `Embeddings: embedded ${embeddingResult.embedded}, remaining ${embeddingResult.remaining}.`,
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Embedding failed: ${message}`);
+      process.exitCode = 1;
     }
 
     const stats = getStats(db);
+
+    if (processed > 0) {
+      console.error(
+        `\nIndexed ${processed} commit(s): ${decisionCount} decisions, ${nonDecisionCount} non-decisions, ${failureCount} failure(s).`,
+      );
+    }
+
     console.error(
-      `\nIndexed ${processed} commit(s): ${decisionCount} decisions, ${nonDecisionCount} non-decisions, ${failureCount} failure(s).`,
-    );
-    console.error(
-      `DB totals: ${stats.commits} commits, ${stats.decisions} decisions (${stats.stated} stated, ${stats.inferred} inferred).`,
+      `DB totals: ${stats.commits} commits, ${stats.decisions} decisions (${stats.stated} stated, ${stats.inferred} inferred, ${stats.embedded} embedded).`,
     );
 
     if (failureCount > 0) {

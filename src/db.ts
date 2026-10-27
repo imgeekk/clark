@@ -6,7 +6,34 @@ import type { Extraction } from "./gemini.js";
 
 export type Db = Database.Database;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
+
+export type DecisionRow = {
+  id: number;
+  title: string;
+  summary: string;
+  rationale: string;
+  reason_quote: string;
+  evidence_type: "stated" | "inferred";
+  confidence: number;
+  commit_sha: string;
+  committed_at: string;
+  author: string;
+  paths: string | null;
+};
+
+export type EmbeddedDecisionRow = DecisionRow & {
+  embedding: Buffer;
+  embedding_dim: number;
+};
+
+export type DecisionForEmbedding = {
+  id: number;
+  title: string;
+  summary: string;
+  rationale: string;
+  reason_quote: string;
+};
 
 export function repoMemoryDir(repoRoot: string): string {
   return join(repoRoot, ".repo-memory");
@@ -36,9 +63,55 @@ export function openDatabase(repoRoot: string): Db {
 }
 
 function migrate(db: Db): void {
-  const version = db.pragma("user_version", { simple: true }) as number;
+  let version = db.pragma("user_version", { simple: true }) as number;
 
   if (version === SCHEMA_VERSION) {
+    return;
+  }
+
+  if (version === 0) {
+    db.exec(`
+      CREATE TABLE commits (
+        sha TEXT PRIMARY KEY,
+        author TEXT NOT NULL,
+        committed_at TEXT NOT NULL,
+        message TEXT NOT NULL,
+        model TEXT NOT NULL,
+        indexed_at TEXT NOT NULL
+      );
+
+      CREATE TABLE decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        reason_quote TEXT NOT NULL DEFAULT '',
+        evidence_type TEXT NOT NULL CHECK (evidence_type IN ('stated', 'inferred')),
+        confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+        embedding BLOB,
+        embedding_model TEXT,
+        embedding_dim INTEGER,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE decision_commits (
+        decision_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+        commit_sha TEXT NOT NULL REFERENCES commits(sha) ON DELETE CASCADE,
+        PRIMARY KEY (decision_id, commit_sha)
+      );
+
+      CREATE TABLE decision_files (
+        decision_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        PRIMARY KEY (decision_id, path)
+      );
+
+      CREATE INDEX idx_decision_files_path ON decision_files(path);
+      CREATE INDEX idx_decision_commits_sha ON decision_commits(commit_sha);
+      CREATE INDEX idx_decisions_confidence ON decisions(confidence);
+    `);
+
+    db.pragma(`user_version = ${SCHEMA_VERSION}`);
     return;
   }
 
@@ -46,56 +119,24 @@ function migrate(db: Db): void {
     db.exec(
       "ALTER TABLE decisions ADD COLUMN reason_quote TEXT NOT NULL DEFAULT '';",
     );
-    db.pragma(`user_version = ${SCHEMA_VERSION}`);
-    return;
+    version = 2;
   }
 
-  if (version !== 0) {
+  if (version === 2) {
+    db.exec(`
+      ALTER TABLE decisions ADD COLUMN embedding_model TEXT;
+      ALTER TABLE decisions ADD COLUMN embedding_dim INTEGER;
+    `);
+    version = 3;
+  }
+
+  if (version !== SCHEMA_VERSION) {
     throw new Error(
       `Unsupported database schema version ${version}. Delete .repo-memory/db.sqlite to start over.`,
     );
   }
 
-  db.exec(`
-    CREATE TABLE commits (
-      sha TEXT PRIMARY KEY,
-      author TEXT NOT NULL,
-      committed_at TEXT NOT NULL,
-      message TEXT NOT NULL,
-      model TEXT NOT NULL,
-      indexed_at TEXT NOT NULL
-    );
-
-    CREATE TABLE decisions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      summary TEXT NOT NULL,
-      rationale TEXT NOT NULL,
-      reason_quote TEXT NOT NULL DEFAULT '',
-      evidence_type TEXT NOT NULL CHECK (evidence_type IN ('stated', 'inferred')),
-      confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
-      embedding BLOB,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE decision_commits (
-      decision_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
-      commit_sha TEXT NOT NULL REFERENCES commits(sha) ON DELETE CASCADE,
-      PRIMARY KEY (decision_id, commit_sha)
-    );
-
-    CREATE TABLE decision_files (
-      decision_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
-      path TEXT NOT NULL,
-      PRIMARY KEY (decision_id, path)
-    );
-
-    CREATE INDEX idx_decision_files_path ON decision_files(path);
-    CREATE INDEX idx_decision_commits_sha ON decision_commits(commit_sha);
-    CREATE INDEX idx_decisions_confidence ON decisions(confidence);
-  `);
-
-  db.pragma(`user_version = ${SCHEMA_VERSION}`);
+  db.pragma(`user_version = ${version}`);
 }
 
 export function getIndexedShas(db: Db, shas: string[]): Set<string> {
@@ -214,6 +255,7 @@ export function getStats(db: Db): {
   decisions: number;
   stated: number;
   inferred: number;
+  embedded: number;
 } {
   const count = (sql: string): number =>
     (db.prepare(sql).get() as { count: number }).count;
@@ -227,5 +269,87 @@ export function getStats(db: Db): {
     inferred: count(
       "SELECT COUNT(*) AS count FROM decisions WHERE evidence_type = 'inferred'",
     ),
+    embedded: count(
+      "SELECT COUNT(*) AS count FROM decisions WHERE embedding IS NOT NULL",
+    ),
   };
+}
+
+export function getDecisionsMissingEmbeddings(
+  db: Db,
+  model: string,
+  dim: number,
+  limit: number,
+): DecisionForEmbedding[] {
+  return db
+    .prepare(
+      `SELECT id, title, summary, rationale, reason_quote
+       FROM decisions
+       WHERE embedding IS NULL
+          OR embedding_model IS NULL
+          OR embedding_model != ?
+          OR embedding_dim IS NULL
+          OR embedding_dim != ?
+       ORDER BY id
+       LIMIT ?`,
+    )
+    .all(model, dim, limit) as DecisionForEmbedding[];
+}
+
+export function countDecisionsMissingEmbeddings(
+  db: Db,
+  model: string,
+  dim: number,
+): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM decisions
+       WHERE embedding IS NULL
+          OR embedding_model IS NULL
+          OR embedding_model != ?
+          OR embedding_dim IS NULL
+          OR embedding_dim != ?`,
+    )
+    .get(model, dim) as { count: number };
+
+  return row.count;
+}
+
+export function storeDecisionEmbedding(
+  db: Db,
+  id: number,
+  model: string,
+  dim: number,
+  embedding: Buffer,
+): void {
+  db.prepare(
+    `UPDATE decisions
+     SET embedding = ?, embedding_model = ?, embedding_dim = ?
+     WHERE id = ?`,
+  ).run(embedding, model, dim, id);
+}
+
+export function getEmbeddedDecisions(
+  db: Db,
+  model: string,
+  dim: number,
+): EmbeddedDecisionRow[] {
+  return db
+    .prepare(
+      `SELECT d.id, d.title, d.summary, d.rationale, d.reason_quote,
+              d.evidence_type, d.confidence, d.embedding, d.embedding_dim,
+              c.sha AS commit_sha, c.committed_at, c.author,
+              (SELECT GROUP_CONCAT(df.path, char(31))
+               FROM decision_files df
+               WHERE df.decision_id = d.id) AS paths
+       FROM decisions d
+       JOIN decision_commits dc ON dc.decision_id = d.id
+       JOIN commits c ON c.sha = dc.commit_sha
+       WHERE d.embedding IS NOT NULL
+         AND d.embedding_model = ?
+         AND d.embedding_dim = ?
+       ORDER BY d.id`,
+    )
+    .all(model, dim) as EmbeddedDecisionRow[];
 }
