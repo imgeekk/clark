@@ -171,16 +171,29 @@ function resolveAffectedPaths(
   return { paths: commit.files, dropped };
 }
 
-function normalizeExtraction(extraction: Extraction): Extraction {
+const REASON_MARKERS =
+  /\b(because|since|so that|so|to avoid|to fix|to handle|to prevent|to support|to make|to keep|to ensure|to reduce|to improve|to match|to align|to work around|due to|in order to|for|when|broke|breaks|broken|regression|crash|crashes|fails|failing|incompatible|deprecated|removed|removes|workaround|instead|rather than|otherwise|without)\b/i;
+
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function normalizeExtraction(
+  extraction: Extraction,
+  commit: Commit,
+): { extraction: Extraction; warning?: string } {
   if (!extraction.is_decision) {
     return {
-      is_decision: false,
-      title: "",
-      summary: "",
-      rationale: "",
-      evidence: "none",
-      confidence: 0,
-      affected_paths: [],
+      extraction: {
+        is_decision: false,
+        title: "",
+        summary: "",
+        rationale: "",
+        reason_quote: "",
+        evidence: "none",
+        confidence: 0,
+        affected_paths: [],
+      },
     };
   }
 
@@ -196,13 +209,45 @@ function normalizeExtraction(extraction: Extraction): Extraction {
     throw new Error("Decision is missing title, summary, or rationale.");
   }
 
-  // Enforce the moderate-scope policy even if the model ignores the prompt.
-  const confidence =
-    extraction.evidence === "inferred"
-      ? Math.min(extraction.confidence, 0.7)
-      : extraction.confidence;
+  let evidence = extraction.evidence;
+  let confidence = extraction.confidence;
+  let reasonQuote = extraction.reason_quote.trim();
+  let warning: string | undefined;
 
-  return { ...extraction, title, summary, rationale, confidence };
+  if (evidence === "stated") {
+    const message = normalizeWhitespace(commit.message).toLowerCase();
+    const quote = normalizeWhitespace(reasonQuote).toLowerCase();
+    const isSubstring = quote.length >= 8 && message.includes(quote);
+    const looksCausal = REASON_MARKERS.test(quote);
+
+    if (!isSubstring || !looksCausal) {
+      warning =
+        "stated evidence had no valid causal reason_quote; downgraded to inferred";
+      evidence = "inferred";
+      confidence = Math.min(confidence, 0.7);
+      reasonQuote = "";
+    }
+  } else {
+    reasonQuote = "";
+  }
+
+  // Enforce the moderate-scope policy even if the model ignores the prompt.
+  if (evidence === "inferred") {
+    confidence = Math.min(confidence, 0.7);
+  }
+
+  return {
+    extraction: {
+      ...extraction,
+      title,
+      summary,
+      rationale,
+      reason_quote: reasonQuote,
+      evidence,
+      confidence,
+    },
+    warning,
+  };
 }
 
 function chunkItems(
@@ -319,16 +364,28 @@ async function main(): Promise<void> {
             throw new Error(`Missing result for ${item.commit.sha}.`);
           }
 
-          const normalized = normalizeExtraction(extraction);
+          const normalized = normalizeExtraction(extraction, item.commit);
           const { paths, dropped } = resolveAffectedPaths(
             item.commit,
-            normalized.affected_paths,
+            normalized.extraction.affected_paths,
           );
 
-          return { item, normalized, paths, dropped };
+          return {
+            item,
+            normalized: normalized.extraction,
+            warning: normalized.warning,
+            paths,
+            dropped,
+          };
         });
 
         for (const entry of prepared) {
+          if (entry.warning) {
+            console.error(
+              `  warning ${entry.item.commit.sha.slice(0, 7)}: ${entry.warning}`,
+            );
+          }
+
           if (entry.dropped.length > 0) {
             console.error(
               `  warning ${entry.item.commit.sha.slice(0, 7)}: dropped paths not in commit: ${entry.dropped.join(", ")}`,

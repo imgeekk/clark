@@ -6,7 +6,7 @@ import type { Extraction } from "./gemini.js";
 
 export type Db = Database.Database;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 export function repoMemoryDir(repoRoot: string): string {
   return join(repoRoot, ".repo-memory");
@@ -42,6 +42,14 @@ function migrate(db: Db): void {
     return;
   }
 
+  if (version === 1) {
+    db.exec(
+      "ALTER TABLE decisions ADD COLUMN reason_quote TEXT NOT NULL DEFAULT '';",
+    );
+    db.pragma(`user_version = ${SCHEMA_VERSION}`);
+    return;
+  }
+
   if (version !== 0) {
     throw new Error(
       `Unsupported database schema version ${version}. Delete .repo-memory/db.sqlite to start over.`,
@@ -63,6 +71,7 @@ function migrate(db: Db): void {
       title TEXT NOT NULL,
       summary TEXT NOT NULL,
       rationale TEXT NOT NULL,
+      reason_quote TEXT NOT NULL DEFAULT '',
       evidence_type TEXT NOT NULL CHECK (evidence_type IN ('stated', 'inferred')),
       confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
       embedding BLOB,
@@ -131,13 +140,14 @@ function storeDecision(
   const info = db
     .prepare(
       `INSERT INTO decisions
-        (title, summary, rationale, evidence_type, confidence, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+        (title, summary, rationale, reason_quote, evidence_type, confidence, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       extraction.title,
       extraction.summary,
       extraction.rationale,
+      extraction.reason_quote,
       extraction.evidence,
       extraction.confidence,
       new Date().toISOString(),
