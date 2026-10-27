@@ -4,10 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "tsx --test src/verify.test.ts src/git.test.ts src/embeddings.test.ts src/retrieval.test.ts",
+    "test": "tsx --test src/verify.test.ts src/git.test.ts src/embeddings.test.ts src/retrieval.test.ts src/mcp.test.ts",
     "ingest": "tsx src/ingest.ts",
     "extract": "tsx src/extract.ts",
     "index": "tsx src/indexer.ts",
+    "serve": "tsx src/serve.ts",
     "why": "tsx src/why.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -23,6 +24,8 @@
   },
   "dependencies": {
     "@google/genai": "^2.31.0",
-    "better-sqlite3": "^13.0.3"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "better-sqlite3": "^13.0.3",
+    "zod": "^4.6.7"
   }
 }

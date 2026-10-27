@@ -1,5 +1,6 @@
 import { setDefaultResultOrder } from "node:dns";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import type { Commit } from "./git.js";
 
@@ -342,9 +343,11 @@ export function createGeminiClient(apiKey: string): GoogleGenAI {
   });
 }
 
-export function loadDotEnv(): void {
-  if (existsSync(".env")) {
-    process.loadEnvFile(".env");
+export function loadDotEnv(dir = "."): void {
+  const envPath = join(dir, ".env");
+
+  if (existsSync(envPath)) {
+    process.loadEnvFile(envPath);
   }
 }
 
