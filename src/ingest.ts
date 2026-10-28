@@ -7,10 +7,12 @@ import {
 } from "./git.js";
 
 const DEFAULT_LIMIT = 100;
+const DEFAULT_BATCH_SIZE = 5;
 
 type Options = {
   repoPath: string;
   limit: number;
+  batchSize: number;
   json: boolean;
 };
 
@@ -21,16 +23,17 @@ function usage(): string {
     "Scan a git repository and print structured commit data.",
     "",
     "Options:",
-    `  --limit <n>   Number of non-merge commits to scan (default: ${DEFAULT_LIMIT})`,
-    "  --json        Print full commit records as JSON (summary goes to stderr)",
-    "  -h, --help    Show this help",
+    `  --limit <n>       Number of non-merge commits to scan (default: ${DEFAULT_LIMIT})`,
+    `  --batch-size <n>  Commits per Gemini request, for the estimate (default: ${DEFAULT_BATCH_SIZE})`,
+    "  --json            Print full commit records as JSON (summary goes to stderr)",
+    "  -h, --help        Show this help",
   ].join("\n");
 }
 
-function parseLimit(value: string): number {
+function parsePositiveInt(value: string, option: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`--limit must be a positive integer, got "${value}"`);
+    throw new Error(`${option} must be a positive integer, got "${value}"`);
   }
   return parsed;
 }
@@ -38,6 +41,7 @@ function parseLimit(value: string): number {
 function parseArgs(argv: string[]): Options {
   let repoPath = ".";
   let limit = DEFAULT_LIMIT;
+  let batchSize = DEFAULT_BATCH_SIZE;
   let json = false;
   const positional: string[] = [];
 
@@ -54,10 +58,22 @@ function parseArgs(argv: string[]): Options {
       if (value === undefined) {
         throw new Error("--limit requires a number");
       }
-      limit = parseLimit(value);
+      limit = parsePositiveInt(value, "--limit");
       i += 1;
     } else if (arg.startsWith("--limit=")) {
-      limit = parseLimit(arg.slice("--limit=".length));
+      limit = parsePositiveInt(arg.slice("--limit=".length), "--limit");
+    } else if (arg === "--batch-size") {
+      const value = argv[i + 1];
+      if (value === undefined) {
+        throw new Error("--batch-size requires a number");
+      }
+      batchSize = parsePositiveInt(value, "--batch-size");
+      i += 1;
+    } else if (arg.startsWith("--batch-size=")) {
+      batchSize = parsePositiveInt(
+        arg.slice("--batch-size=".length),
+        "--batch-size",
+      );
     } else if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}\n\n${usage()}`);
     } else {
@@ -73,7 +89,7 @@ function parseArgs(argv: string[]): Options {
     repoPath = positional[0];
   }
 
-  return { repoPath, limit, json };
+  return { repoPath, limit, batchSize, json };
 }
 
 function truncate(text: string, maxLength: number): string {
@@ -88,6 +104,7 @@ function printSummary(
   limit: number,
   kept: number,
   skipped: Record<SkipReason, number>,
+  batchSize: number,
   log: (message: string) => void,
 ): void {
   const skippedTotal = Object.values(skipped).reduce(
@@ -103,6 +120,17 @@ function printSummary(
   log(`Scanned ${scanned} non-merge commits (newest first, limit ${limit})`);
   log(
     `Kept ${kept}, skipped ${skippedTotal}${breakdown ? ` (${breakdown})` : ""}`,
+  );
+
+  if (kept === 0) {
+    log("Estimated Gemini requests: 0");
+    return;
+  }
+
+  // A lower bound: the indexer also splits a batch when its diffs are large.
+  const requests = Math.ceil(kept / batchSize);
+  log(
+    `Estimated Gemini requests: at least ${requests} (${kept} commit${kept === 1 ? "" : "s"} at batch size ${batchSize}; large diffs split batches)`,
   );
 }
 
@@ -132,14 +160,14 @@ async function main(): Promise<void> {
   }
 
   if (options.json) {
-    printSummary(repoRoot, commits.length, options.limit, kept.length, skipped, (line) =>
+    printSummary(repoRoot, commits.length, options.limit, kept.length, skipped, options.batchSize, (line) =>
       console.error(line),
     );
     console.log(JSON.stringify(kept, null, 2));
     return;
   }
 
-  printSummary(repoRoot, commits.length, options.limit, kept.length, skipped, (line) =>
+  printSummary(repoRoot, commits.length, options.limit, kept.length, skipped, options.batchSize, (line) =>
     console.log(line),
   );
   console.log("");
