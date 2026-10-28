@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { resolve } from "node:path";
 
 const MAX_BUFFER = 50 * 1024 * 1024;
 
@@ -149,7 +150,9 @@ function describeGitError(error: unknown): string {
 export async function resolveRepoRoot(input: string): Promise<string> {
   try {
     const stdout = await runGit(["-C", input, "rev-parse", "--show-toplevel"]);
-    return stdout.trim();
+    // git always reports forward slashes; normalize so paths printed next to
+    // native ones do not mix separators.
+    return resolve(stdout.trim());
   } catch (error) {
     const gitError = error as GitFailure;
 
@@ -161,6 +164,55 @@ export async function resolveRepoRoot(input: string): Promise<string> {
     throw new Error(
       `Not a git repository: ${input}${detail ? `\n${detail}` : ""}`,
     );
+  }
+}
+
+export type HeadInfo = {
+  sha: string;
+  date: string;
+  subject: string;
+};
+
+// Returns null on an unborn branch, so status can report it instead of failing.
+export async function readHead(repoRoot: string): Promise<HeadInfo | null> {
+  try {
+    const stdout = await runGit([
+      "-C",
+      repoRoot,
+      "log",
+      "-1",
+      "--format=%H%x1f%cI%x1f%s",
+    ]);
+    const [sha, date, subject] = stdout.trimEnd().split("\x1f");
+
+    if (!sha || !date) {
+      return null;
+    }
+
+    return { sha, date, subject: subject ?? "" };
+  } catch {
+    return null;
+  }
+}
+
+// Counts commits reachable from HEAD but not from the given commit. Returns
+// null when git cannot answer, for example after a rebase dropped that commit.
+export async function countCommitsSince(
+  repoRoot: string,
+  sha: string,
+): Promise<number | null> {
+  try {
+    const stdout = await runGit([
+      "-C",
+      repoRoot,
+      "rev-list",
+      "--count",
+      `${sha}..HEAD`,
+    ]);
+    const count = Number.parseInt(stdout.trim(), 10);
+    return Number.isNaN(count) ? null : count;
+  } catch {
+    return null;
   }
 }
 

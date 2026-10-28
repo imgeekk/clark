@@ -257,6 +257,40 @@ export function storeProcessedCommit(
   })();
 }
 
+export type IndexedCommitSummary = {
+  sha: string;
+  date: string;
+  subject: string;
+};
+
+export function getLastIndexed(db: Db): {
+  indexedAt: string | null;
+  commit: IndexedCommitSummary | null;
+} {
+  const indexedAt = db
+    .prepare("SELECT MAX(indexed_at) AS at FROM commits")
+    .get() as { at: string | null };
+
+  // julianday() compares the timestamps chronologically. Comparing the raw
+  // strings would misorder commits written in different timezone offsets.
+  const row = db
+    .prepare(
+      "SELECT sha, committed_at AS date, message FROM commits ORDER BY julianday(committed_at) DESC LIMIT 1",
+    )
+    .get() as { sha: string; date: string; message: string } | undefined;
+
+  return {
+    indexedAt: indexedAt.at,
+    commit: row
+      ? {
+          sha: row.sha,
+          date: row.date,
+          subject: row.message.split("\n")[0] ?? "",
+        }
+      : null,
+  };
+}
+
 export function getStats(db: Db): {
   commits: number;
   decisions: number;

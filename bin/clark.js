@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const COMMANDS = {
   serve: "serve.js",
   index: "indexer.js",
+  status: "status.js",
   why: "why.js",
   ingest: "ingest.js",
   extract: "extract.js",
@@ -21,6 +22,7 @@ function usage() {
     "Commands:",
     "  serve     Start the MCP server over stdio (default)",
     "  index     Mine decisions from git history into .repo-memory/db.sqlite",
+    "  status    Show what is indexed and whether it is current",
     "  why       Show decisions that touched a file or directory",
     "  ingest    List the commits the indexer would keep (diagnostic)",
     "  extract   Run extraction on a sample and print raw JSON (diagnostic)",
