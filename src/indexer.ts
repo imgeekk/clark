@@ -1,5 +1,6 @@
 import {
   createGeminiClient,
+  describeGeminiFailure,
   getApiKey,
   loadDotEnv,
   MAX_DIFF_CHARS,
@@ -347,7 +348,7 @@ async function main(): Promise<void> {
           }
         } catch (error) {
           failureCount += batch.length;
-          const message = error instanceof Error ? error.message : String(error);
+          const message = describeGeminiFailure(error);
           console.error(`  batch failed: ${message}`);
           if (raw) {
             console.error(`  raw response:\n${raw}`);
@@ -377,7 +378,7 @@ async function main(): Promise<void> {
         );
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = describeGeminiFailure(error);
       console.error(`Embedding failed: ${message}`);
       process.exitCode = 1;
     }

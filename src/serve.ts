@@ -1,5 +1,5 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { openDatabase } from "./db.js";
+import { getStats, openDatabase } from "./db.js";
 import { loadDotEnv } from "./gemini.js";
 import { resolveRepoRoot } from "./git.js";
 import { createMcpServer } from "./mcp.js";
@@ -49,6 +49,18 @@ async function main(): Promise<void> {
   // the key from the repository the server was pointed at, not from cwd.
   loadDotEnv(repoRoot);
   const db = openDatabase(repoRoot);
+  const stats = getStats(db);
+
+  if (stats.decisions === 0) {
+    console.error(
+      [
+        `clark has no decisions for ${repoRoot} yet.`,
+        `Run: clark index ${repoRoot}`,
+        "The tools will return empty results until indexing finishes.",
+      ].join("\n"),
+    );
+  }
+
   const server = createMcpServer(db);
   const transport = new StdioServerTransport();
 

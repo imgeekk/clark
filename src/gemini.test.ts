@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { loadDotEnv } from "./gemini.js";
+import { describeGeminiFailure, loadDotEnv } from "./gemini.js";
 
 function withEnvFile(contents: string, run: (dir: string) => void): void {
   const dir = mkdtempSync(join(tmpdir(), "clark-env-"));
@@ -56,4 +56,27 @@ test("ignores a missing .env file", () => {
   assert.doesNotThrow(() => {
     loadDotEnv(join(tmpdir(), "clark-env-does-not-exist"));
   });
+});
+
+test("adds a resume hint to a quota error", () => {
+  const described = describeGeminiFailure(
+    new Error('{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}'),
+  );
+
+  assert.match(described, /RESOURCE_EXHAUSTED/);
+  assert.match(described, /rerun the same command later/);
+});
+
+test("adds a key hint to an auth error", () => {
+  const described = describeGeminiFailure(
+    new Error('{"error":{"code":403,"status":"PERMISSION_DENIED"}}'),
+  );
+
+  assert.match(described, /Check GEMINI_API_KEY/);
+});
+
+test("leaves an unrecognized error unchanged", () => {
+  const described = describeGeminiFailure(new Error("schema mismatch"));
+
+  assert.equal(described, "schema mismatch");
 });

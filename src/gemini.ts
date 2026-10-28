@@ -416,6 +416,32 @@ export function getApiKey(): string {
   return key;
 }
 
+const QUOTA_PATTERN = /RESOURCE_EXHAUSTED|\b429\b|quota|rate limit/i;
+const AUTH_PATTERN =
+  /PERMISSION_DENIED|\b401\b|\b403\b|UNAUTHENTICATED|API_KEY_INVALID|API key not valid/i;
+const NETWORK_PATTERN =
+  /ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up/i;
+
+// Gemini errors arrive as raw JSON or HTTP text. Add one line that says what to
+// do, and leave the original text intact so the cause is still visible.
+export function describeGeminiFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (QUOTA_PATTERN.test(message)) {
+    return `${message}\n  Gemini refused the request (quota or rate limit). Work already stored is kept; rerun the same command later to continue.`;
+  }
+
+  if (AUTH_PATTERN.test(message)) {
+    return `${message}\n  Gemini rejected the API key. Check GEMINI_API_KEY.`;
+  }
+
+  if (NETWORK_PATTERN.test(message)) {
+    return `${message}\n  Could not reach the Gemini API. Check network access and retry.`;
+  }
+
+  return message;
+}
+
 async function requestStructured(
   ai: GoogleGenAI,
   model: string,
