@@ -60,7 +60,7 @@ clark init /path/to/that/repo
 # 5. run that command, then restart your client
 ```
 
-Step 4 prints one line each for Claude Code, Codex, and OpenCode. Run the line for the client you use.
+Step 4 prints one line each for Claude Code, Codex, and OpenCode. Run the line for the client you use, then rerun with `--agents-md` so the agent knows to call it.
 
 ## Commands
 
@@ -68,7 +68,7 @@ Step 4 prints one line each for Claude Code, Codex, and OpenCode. Run the line f
 | --- | --- |
 | `clark index [repo]` | Mine commits into `<repo>/.repo-memory/db.sqlite`, then backfill embeddings |
 | `clark status [repo]` | Show what is indexed and whether HEAD has moved since |
-| `clark init [repo]` | Print the command that registers the server; `--json` prints the config shape instead |
+| `clark init [repo]` | Print the command that registers the server; `--agents-md` adds the call instructions to `AGENTS.md`; `--json` prints the config shape |
 | `clark why <path> [repo]` | Print decisions that touched a file or any file under a directory |
 | `clark serve [repo]` | Start the MCP server over stdio (the default command) |
 | `clark ingest [repo]` | List the commits the indexer would keep and estimate the request count |
@@ -101,6 +101,16 @@ The part after `--` is identical everywhere; only the client's subcommand differ
 - **OpenCode** writes to the project config by default. `--global` makes the entry available in every project, and then the same naming rule applies.
 
 Tool names are prefixed with the entry name: `mcp__clark__why` in Claude Code, `tools.clark.why` in OpenCode.
+
+### Make the agent actually call it
+
+Registering a server makes its tools available; it does not make an agent use them. Asked to unpin a dependency, Codex answered from the code and the web, recommended a change that a recorded decision argues against, and never called the tool — even with a repository instruction saying it must.
+
+What the same agent did follow, from the same file, was a shell command. So `clark init --agents-md` appends a block to `AGENTS.md` telling the agent to run `clark why <file>` before editing. Codex and OpenCode read `AGENTS.md`; Claude Code reads `CLAUDE.md`, so add the same block there. Commit the file so every session and every teammate gets it.
+
+The block calls `clark` by name, so it needs the global install.
+
+The MCP tools still matter — for clients and models that do call them, and for asking directly: "check clark before you edit this."
 
 For a client that only reads a config file — Claude Desktop, Cursor, Windsurf — `clark init --json` prints the `mcpServers` shape to paste in. Some clients use a different key or path (VS Code reads `servers`, OpenCode reads `mcp.servers`), and clark does not write those.
 
@@ -169,7 +179,7 @@ The default model is `gemini-3.5-flash-lite`. The free tier is enough for a smal
 
 ```bash
 npm install
-npm test          # 69 tests, no network
+npm test          # 73 tests, no network
 npm run typecheck
 npm run build     # emits dist/, which the clark bin runs
 npm pack          # builds dist/ first, then lists the shipped files

@@ -1,6 +1,6 @@
 {
   "name": "@imgeekk/clark",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Mine engineering decisions from git history and serve them to coding agents over MCP.",
   "repository": {
     "type": "git",
@@ -27,7 +27,7 @@
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm test",
-    "test": "tsx --test src/verify.test.ts src/git.test.ts src/embeddings.test.ts src/retrieval.test.ts src/mcp.test.ts src/gemini.test.ts src/status.test.ts src/mcp-config.test.ts",
+    "test": "tsx --test src/verify.test.ts src/git.test.ts src/embeddings.test.ts src/retrieval.test.ts src/mcp.test.ts src/gemini.test.ts src/status.test.ts src/mcp-config.test.ts src/agents-md.test.ts",
     "ingest": "tsx src/ingest.ts",
     "extract": "tsx src/extract.ts",
     "index": "tsx src/indexer.ts",
