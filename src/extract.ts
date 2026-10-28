@@ -16,7 +16,7 @@ import {
 } from "./git.js";
 
 const DEFAULT_LIMIT = 20;
-const DEFAULT_MODEL = "gemini-3-flash-preview";
+const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 
 type Options = {
   repoPath: string;

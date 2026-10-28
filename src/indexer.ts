@@ -36,7 +36,7 @@ import {
 
 const DEFAULT_LIMIT = 100;
 const DEFAULT_BATCH_SIZE = 5;
-const DEFAULT_MODEL = "gemini-3-flash-preview";
+const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const MAX_BATCH_DIFF_CHARS = 48_000;
 
 type Options = {
