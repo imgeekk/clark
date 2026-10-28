@@ -1,5 +1,7 @@
 # clark
 
+[![npm](https://img.shields.io/npm/v/@imgeekk/clark.svg)](https://www.npmjs.com/package/@imgeekk/clark)
+
 Mine the engineering decisions buried in a repository's git history, then serve them to a coding agent over MCP.
 
 An agent reading `src/` can see what the code does. It cannot see why a dependency is pinned, why two arguments are coerced differently, or why a hot path skips an obvious abstraction. clark turns those choices into records with a rationale, a confidence, and a commit to point at — and exposes them as MCP tools an agent can call before it edits.
@@ -33,6 +35,8 @@ Indexing sends commit messages and diffs to the Gemini API, and the decision tex
 ```bash
 npm install -g @imgeekk/clark
 ```
+
+Package page: [@imgeekk/clark on npm](https://www.npmjs.com/package/@imgeekk/clark).
 
 Or run it without installing:
 
