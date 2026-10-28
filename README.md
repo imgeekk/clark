@@ -26,6 +26,8 @@ Three MCP tools over stdio: `search_decisions`, `why`, `check_change`.
 - git on `PATH`
 - a Gemini API key (`GEMINI_API_KEY`)
 
+Indexing sends commit messages and diffs to the Gemini API, and the decision text is sent again to compute embeddings. `search_decisions` also sends the query text to be embedded; `why` and `check_change` never call the API. Nothing else leaves your machine: the database stays in `<repo>/.repo-memory/`. If the repository's history cannot be sent to a third party, do not index it.
+
 ## Install
 
 ```bash
@@ -41,9 +43,10 @@ npx @imgeekk/clark index .
 ## Quickstart
 
 ```bash
-# 1. give clark a key: environment, .env in the current directory, or .env in
-#    the repository you index or serve
-echo "GEMINI_API_KEY=your-key" > .env
+# 1. give clark a key. Add this line to .env in the repository you index:
+#      GEMINI_API_KEY=your-key
+#    and add .env to that repository's .gitignore if it is not already there.
+#    clark also reads the key from its own environment.
 
 # 2. mine the repository you want an agent to understand
 clark index /path/to/that/repo
@@ -51,13 +54,15 @@ clark index /path/to/that/repo
 # 3. check what it found
 clark status /path/to/that/repo
 
-# 4. write the MCP config for that repository
-clark init /path/to/that/repo --write
+# 4. print the MCP config and paste it into the file your client reads
+clark init /path/to/that/repo
 
 # 5. restart your MCP client
 ```
 
-Without `--write`, `clark init` prints the same config to stdout so you can paste it into whatever file your client reads.
+Add `--write` to step 4 to create `.mcp.json` in the repository instead of printing the config. That file is only useful to clients that read that exact path, and it holds absolute paths, so do not commit it unless every teammate regenerates their own.
+
+The printed config is the client-neutral option: the shape is the same everywhere, only the file it lives in differs.
 
 ## Commands
 
@@ -74,6 +79,8 @@ Without `--write`, `clark init` prints the same config to stdout so you can past
 `clark index` options: `--limit <n>` (default 100), `--offset <n>`, `--batch-size <n>` (commits per request, default 5), `--model <id>`, `--force` (re-index commits already stored).
 
 Indexing is incremental: re-running `index` only processes commits that are not in the database yet, and `--offset` lets you walk further back through history in chunks. Completed batches are written as they finish, so hitting a quota limit or pressing Ctrl-C keeps the work already done; rerun the same command to continue.
+
+The default `--limit 100` means a long history is only partly indexed. `clark status` counts what is stored, not how much history exists.
 
 The database lives at `<repo>/.repo-memory/` and that directory ignores itself, so you never need to edit the target repository's `.gitignore`. It is local to your machine: a teammate who clones the same repository starts with no index.
 
@@ -121,6 +128,22 @@ Every record carries `evidence`, `confidence`, `reason_quote`, and `commit_sha`.
 - `evidence: "inferred"` — the reason is inferred from the diff. It is a hypothesis. Confidence is capped at 0.7 and the rationale is phrased as a guess.
 
 The tool descriptions tell the agent this. Treat an inferred record as "worth checking", not as a fact. A repository whose commit messages only say what changed will produce mostly inferred records, which is the honest outcome.
+
+## If it seems to do nothing
+
+Three different failures look the same from inside an agent: no tools, no decisions, and no reason to call them.
+
+**The client does not list the tools.** The server is not starting. Run the command from your config by hand, exactly as the client would:
+
+```bash
+node /absolute/path/to/dist/serve.js /absolute/path/to/repo
+```
+
+It should sit silently waiting for JSON-RPC input. Errors go to stderr, and most clients hide stderr, so this is usually the only place to see them. The common causes are a stale absolute path after moving the repository, a client reading a different config file than the one you edited, and Node older than 22.
+
+**`clark status` shows 0 decisions.** The index is real but empty. `clark ingest <repo>` shows which commits were kept and how the rest were dropped. A repository whose commit messages say what changed but not why produces inferred records, and sometimes none at all; that is the filter working, not a bug. Also check that `--limit` reached far enough back.
+
+**The tools exist but the agent never calls them.** Ask once, directly: "check clark for decisions on this file before editing it." If that works and unprompted calls do not, the gap is in the tool description, not your setup.
 
 ## Cost
 

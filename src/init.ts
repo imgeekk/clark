@@ -126,6 +126,9 @@ async function main(): Promise<void> {
   writeFileSync(configPath, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
   console.error(`Wrote ${configPath}`);
   console.error("Restart your MCP client to pick it up.");
+  console.error(
+    "The paths are absolute, so they only apply to this machine. Do not commit this file unless every teammate regenerates their own.",
+  );
   warnIfUnindexed(repoRoot);
 }
 
