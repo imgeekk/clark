@@ -54,15 +54,13 @@ clark index /path/to/that/repo
 # 3. check what it found
 clark status /path/to/that/repo
 
-# 4. print the MCP config and paste it into the file your client reads
+# 4. print the command that registers clark with your client
 clark init /path/to/that/repo
 
-# 5. restart your MCP client
+# 5. run that command, then restart your client
 ```
 
-Add `--write` to step 4 to create `.mcp.json` in the repository instead of printing the config. That file is only useful to clients that read that exact path, and it holds absolute paths, so do not commit it unless every teammate regenerates their own.
-
-The printed config is the client-neutral option: the shape is the same everywhere, only the file it lives in differs.
+Step 4 prints one line each for Claude Code, Codex, and OpenCode. Run the line for the client you use.
 
 ## Commands
 
@@ -70,7 +68,7 @@ The printed config is the client-neutral option: the shape is the same everywher
 | --- | --- |
 | `clark index [repo]` | Mine commits into `<repo>/.repo-memory/db.sqlite`, then backfill embeddings |
 | `clark status [repo]` | Show what is indexed and whether HEAD has moved since |
-| `clark init [repo]` | Print the MCP config; `--write` creates `.mcp.json` in the repository |
+| `clark init [repo]` | Print the command that registers the server; `--json` prints the config shape instead |
 | `clark why <path> [repo]` | Print decisions that touched a file or any file under a directory |
 | `clark serve [repo]` | Start the MCP server over stdio (the default command) |
 | `clark ingest [repo]` | List the commits the indexer would keep and estimate the request count |
@@ -86,25 +84,27 @@ The database lives at `<repo>/.repo-memory/` and that directory ignores itself, 
 
 ## Wire it into your MCP client
 
-clark is a stdio MCP server, so any MCP client can run it. The configuration is the common `mcpServers` shape; only the file it lives in differs per client.
+clark is a stdio MCP server. `clark init` prints a registration command for each client; run the one you use.
 
-```json
-{
-  "mcpServers": {
-    "clark": {
-      "command": "node",
-      "args": [
-        "/absolute/path/to/dist/serve.js",
-        "/absolute/path/to/your-repo"
-      ]
-    }
-  }
-}
+```text
+claude mcp add clark -- node "/absolute/path/to/dist/serve.js" "/absolute/path/to/your-repo"
+codex mcp add clark -- node "/absolute/path/to/dist/serve.js" "/absolute/path/to/your-repo"
+opencode mcp add clark -- node "/absolute/path/to/dist/serve.js" "/absolute/path/to/your-repo"
 ```
 
-`clark init` fills in both absolute paths for you. If you installed globally, you can use `"command": "clark"` with `"args": ["serve", "/absolute/path/to/your-repo"]` instead.
+The part after `--` is identical everywhere; only the client's subcommand differs. The client validates and stores the entry itself, so clark never edits another tool's config.
 
-Restart the client after editing its config. The server reads `GEMINI_API_KEY` from its environment, or from `.env` in the repository you pointed it at. Most MCP clients do not forward their whole environment to the server, so the `.env` in the target repository is the reliable option.
+**One server per repository.** The repository path is an argument, so each repository needs its own entry.
+
+- **Claude Code** defaults to `local` scope, private to you. `--scope project` writes `.mcp.json` in the repository instead; that file holds absolute paths, so it only works on the machine that generated it, and Claude Code asks you to approve a project-scoped server on first launch.
+- **Codex** writes to one global config, so give each repository a different name: `codex mcp add clark-oxygen -- ...`. Two entries called `clark` replace each other.
+- **OpenCode** writes to the project config by default. `--global` makes the entry available in every project, and then the same naming rule applies.
+
+Tool names are prefixed with the entry name: `mcp__clark__why` in Claude Code, `tools.clark.why` in OpenCode.
+
+For a client that only reads a config file — Claude Desktop, Cursor, Windsurf — `clark init --json` prints the `mcpServers` shape to paste in. Some clients use a different key or path (VS Code reads `servers`, OpenCode reads `mcp.servers`), and clark does not write those.
+
+Restart the client after registering. The server reads `GEMINI_API_KEY` from its environment, or from `.env` in the repository you pointed it at. Most MCP clients do not forward their whole environment to the server, so the `.env` in the target repository is the reliable option.
 
 `search_decisions` embeds the query, so it needs the API key at call time. `why` and `check_change` only read SQLite and work offline.
 
@@ -169,7 +169,7 @@ The default model is `gemini-3.5-flash-lite`. The free tier is enough for a smal
 
 ```bash
 npm install
-npm test          # 70 tests, no network
+npm test          # 69 tests, no network
 npm run typecheck
 npm run build     # emits dist/, which the clark bin runs
 npm pack          # builds dist/ first, then lists the shipped files

@@ -1,66 +1,43 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildEntry, mergeConfig } from "./mcp-config.js";
-
-const entry = buildEntry("/clark/dist/serve.js", "/repo");
+import { buildCommand, buildEntry, quoteArg } from "./mcp-config.js";
 
 test("builds a node entry with absolute paths", () => {
-  assert.deepEqual(entry, {
+  assert.deepEqual(buildEntry("/clark/dist/serve.js", "/repo"), {
     command: "node",
     args: ["/clark/dist/serve.js", "/repo"],
   });
 });
 
-test("creates a config when none exists", () => {
-  assert.deepEqual(mergeConfig(undefined, entry, false), {
-    mcpServers: { clark: entry },
-  });
+test("quotes a path that needs no quoting anyway", () => {
+  assert.equal(quoteArg("/clark/dist/serve.js"), '"/clark/dist/serve.js"');
 });
 
-test("keeps other servers and adds clark", () => {
-  const existing = {
-    mcpServers: { other: { command: "other", args: [] } },
-  };
-
-  assert.deepEqual(mergeConfig(existing, entry, false), {
-    mcpServers: { other: { command: "other", args: [] }, clark: entry },
-  });
-});
-
-test("is idempotent when the entry already matches", () => {
-  const existing = mergeConfig(undefined, entry, false);
-
-  assert.deepEqual(mergeConfig(existing, entry, false), existing);
-});
-
-test("refuses to replace a different entry without force", () => {
-  const existing = {
-    mcpServers: { clark: { command: "node", args: ["/old/serve.js", "/old"] } },
-  };
-
-  assert.throws(
-    () => mergeConfig(existing, entry, false),
-    /already defines "clark"/,
+test("keeps a Windows path intact inside quotes", () => {
+  assert.equal(
+    quoteArg("C:\\Users\\me\\My Repo"),
+    '"C:\\Users\\me\\My Repo"',
   );
 });
 
-test("replaces a different entry with force", () => {
-  const existing = {
-    mcpServers: { clark: { command: "node", args: ["/old/serve.js", "/old"] } },
-  };
-
-  assert.deepEqual(mergeConfig(existing, entry, true), {
-    mcpServers: { clark: entry },
-  });
+test("quotes an empty argument", () => {
+  assert.equal(quoteArg(""), '""');
 });
 
-test("rejects a config whose mcpServers is not an object", () => {
-  assert.throws(
-    () => mergeConfig({ mcpServers: [] }, entry, false),
-    /not an object/,
+test("escapes a double quote inside an argument", () => {
+  assert.equal(quoteArg('a"b'), '"a\\"b"');
+});
+
+test("builds a command from node and both paths", () => {
+  assert.equal(
+    buildCommand("/clark/dist/serve.js", "/repo"),
+    'node "/clark/dist/serve.js" "/repo"',
   );
 });
 
-test("rejects a config that is not an object", () => {
-  assert.throws(() => mergeConfig([], entry, false), /not a JSON object/);
+test("builds a command for Windows paths with spaces", () => {
+  assert.equal(
+    buildCommand("C:\\Program Files\\clark\\serve.js", "C:\\repos\\oxygen"),
+    'node "C:\\Program Files\\clark\\serve.js" "C:\\repos\\oxygen"',
+  );
 });

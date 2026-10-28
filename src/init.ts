@@ -1,45 +1,43 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { databasePath } from "./db.js";
 import { resolveRepoRoot } from "./git.js";
-import { buildEntry, mergeConfig, SERVER_NAME } from "./mcp-config.js";
+import {
+  buildCommand,
+  buildEntry,
+  type McpConfig,
+  SERVER_NAME,
+} from "./mcp-config.js";
 
 type Options = {
   repoPath: string;
-  write: boolean;
-  force: boolean;
+  json: boolean;
 };
-
-const CONFIG_FILE = ".mcp.json";
 
 function usage(): string {
   return [
-    "Usage: npx tsx src/init.ts [repo-path] [options]",
+    "Usage: clark init [repo-path] [options]",
     "",
-    "Print the MCP client config that launches clark for a repository.",
+    "Print the command that registers clark with an MCP client.",
     "",
     "Options:",
-    `  --write      Create ${CONFIG_FILE} in the repository`,
-    "  --force      Replace an existing clark entry in that file",
+    "  --json       Print the mcpServers JSON instead of the commands",
     "  -h, --help   Show this help",
   ].join("\n");
 }
 
 function parseArgs(argv: string[]): Options {
   let repoPath = ".";
-  let write = false;
-  let force = false;
+  let json = false;
   const positional: string[] = [];
 
   for (const arg of argv) {
     if (arg === "-h" || arg === "--help") {
       console.error(usage());
       process.exit(0);
-    } else if (arg === "--write") {
-      write = true;
-    } else if (arg === "--force") {
-      force = true;
+    } else if (arg === "--json") {
+      json = true;
     } else if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}\n\n${usage()}`);
     } else {
@@ -57,7 +55,7 @@ function parseArgs(argv: string[]): Options {
     repoPath = positional[0];
   }
 
-  return { repoPath, write, force };
+  return { repoPath, json };
 }
 
 // dist/init.js sits next to dist/serve.js. When this runs from source through
@@ -78,24 +76,6 @@ function findServePath(): string {
   throw new Error("Could not find serve.js. Run `npm run build` first.");
 }
 
-function readExisting(path: string): unknown {
-  if (!existsSync(path)) {
-    return undefined;
-  }
-
-  let text = readFileSync(path, "utf8");
-
-  if (text.charCodeAt(0) === 0xfeff) {
-    text = text.slice(1);
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(`${path} is not valid JSON. Fix it or remove it first.`);
-  }
-}
-
 function warnIfUnindexed(repoRoot: string): void {
   if (!existsSync(databasePath(repoRoot))) {
     console.error(`No index yet. Run: clark index ${repoRoot}`);
@@ -105,30 +85,35 @@ function warnIfUnindexed(repoRoot: string): void {
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const repoRoot = await resolveRepoRoot(options.repoPath);
-  const entry = buildEntry(findServePath(), repoRoot);
+  const servePath = findServePath();
 
-  if (!options.write) {
-    const snippet = { mcpServers: { [SERVER_NAME]: entry } };
-    console.log(JSON.stringify(snippet, null, 2));
-    console.error(
-      "Add this to your MCP client's config, or rerun with --write to create .mcp.json here.",
-    );
-    console.error(
-      "The paths are absolute, so they only apply to this machine.",
-    );
+  if (options.json) {
+    const config: McpConfig = {
+      mcpServers: { [SERVER_NAME]: buildEntry(servePath, repoRoot) },
+    };
+
+    console.log(JSON.stringify(config, null, 2));
+    console.error("Paste this into the config file your client reads.");
+    console.error("To register by command instead, rerun without --json.");
     warnIfUnindexed(repoRoot);
     return;
   }
 
-  const configPath = join(repoRoot, CONFIG_FILE);
-  const merged = mergeConfig(readExisting(configPath), entry, options.force);
+  const command = buildCommand(servePath, repoRoot);
 
-  writeFileSync(configPath, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
-  console.error(`Wrote ${configPath}`);
-  console.error("Restart your MCP client to pick it up.");
+  console.log(`claude mcp add ${SERVER_NAME} -- ${command}`);
+  console.log(`codex mcp add ${SERVER_NAME} -- ${command}`);
+  console.log(`opencode mcp add ${SERVER_NAME} -- ${command}`);
+
+  console.error("");
+  console.error("Run the line for your client, then restart it.");
   console.error(
-    "The paths are absolute, so they only apply to this machine. Do not commit this file unless every teammate regenerates their own.",
+    "Claude Code defaults to local scope; add --scope project to write .mcp.json in the repository.",
   );
+  console.error(
+    "Codex stores servers globally: use a different name per repository, e.g. clark-oxygen.",
+  );
+  console.error("For clients that read config files instead, rerun with --json.");
   warnIfUnindexed(repoRoot);
 }
 

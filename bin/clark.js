@@ -24,7 +24,7 @@ function usage() {
     "  serve     Start the MCP server over stdio (default)",
     "  index     Mine decisions from git history into .repo-memory/db.sqlite",
     "  status    Show what is indexed and whether it is current",
-    "  init      Print or write the MCP client config for this repository",
+    "  init      Print the command that registers clark with an MCP client",
     "  why       Show decisions that touched a file or directory",
     "  ingest    List the commits the indexer would keep (diagnostic)",
     "  extract   Run extraction on a sample and print raw JSON (diagnostic)",

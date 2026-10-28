@@ -1,6 +1,6 @@
 {
   "name": "@imgeekk/clark",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Mine engineering decisions from git history and serve them to coding agents over MCP.",
   "repository": {
     "type": "git",

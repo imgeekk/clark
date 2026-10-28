@@ -16,59 +16,16 @@ export function buildEntry(
   return { command: "node", args: [servePath, repoRoot] };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+// Always quote: an unquoted Windows path loses its separators in bash, and a
+// path with a space breaks in every shell.
+export function quoteArg(arg: string): string {
+  return `"${arg.replace(/"/g, '\\"')}"`;
 }
 
-function sameEntry(a: unknown, b: McpServerEntry): boolean {
-  if (!isRecord(a)) {
-    return false;
-  }
-
-  if (a.command !== b.command) {
-    return false;
-  }
-
-  if (!Array.isArray(a.args) || a.args.length !== b.args.length) {
-    return false;
-  }
-
-  return a.args.every((arg, index) => arg === b.args[index]);
-}
-
-// Adds or updates the clark entry while leaving other servers untouched.
-// An existing entry that differs is only replaced when `force` is set.
-export function mergeConfig(
-  existing: unknown,
-  entry: McpServerEntry,
-  force: boolean,
-): McpConfig {
-  if (existing === undefined || existing === null) {
-    return { mcpServers: { [SERVER_NAME]: entry } };
-  }
-
-  if (!isRecord(existing)) {
-    throw new Error("Existing .mcp.json is not a JSON object.");
-  }
-
-  const servers = existing.mcpServers ?? {};
-
-  if (!isRecord(servers)) {
-    throw new Error('Existing .mcp.json has a "mcpServers" that is not an object.');
-  }
-
-  if (sameEntry(servers[SERVER_NAME], entry)) {
-    return existing as McpConfig;
-  }
-
-  if (servers[SERVER_NAME] !== undefined && !force) {
-    throw new Error(
-      `Existing .mcp.json already defines "${SERVER_NAME}". Rerun with --force to replace it.`,
-    );
-  }
-
-  return {
-    ...existing,
-    mcpServers: { ...servers, [SERVER_NAME]: entry },
-  };
+// The launch command shared by clients whose CLI takes
+// `mcp add <name> -- <command>`. `node` is used instead of the clark shim
+// because clients spawn the process directly and may not resolve a Windows
+// .cmd wrapper.
+export function buildCommand(servePath: string, repoRoot: string): string {
+  return `node ${quoteArg(servePath)} ${quoteArg(repoRoot)}`;
 }
