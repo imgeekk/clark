@@ -110,7 +110,7 @@ async function main(): Promise<void> {
   console.error("");
   console.error("Run the line for your client, then restart it.");
   console.error(
-    "Claude Code asks you to approve a project-scoped server on first launch.",
+    "Claude Code writes .mcp.json and asks you to approve it on first launch; the file holds absolute paths, so do not commit it.",
   );
   console.error(
     "Codex stores servers globally: use a different name per repository, e.g. clark-oxygen.",
