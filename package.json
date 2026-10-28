@@ -1,6 +1,6 @@
 {
-  "name": "clark",
-  "version": "1.0.0",
+  "name": "@imgeekk/clark",
+  "version": "0.1.0",
   "description": "Mine engineering decisions from git history and serve them to coding agents over MCP.",
   "bin": {
     "clark": "./bin/clark.js"
@@ -11,6 +11,9 @@
   ],
   "engines": {
     "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -26,9 +29,18 @@
     "why": "tsx src/why.ts",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "git",
+    "history",
+    "decisions",
+    "mcp",
+    "ai",
+    "agent",
+    "sqlite",
+    "gemini"
+  ],
+  "author": "imgeekk",
+  "license": "MIT",
   "type": "module",
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
