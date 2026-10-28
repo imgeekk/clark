@@ -87,7 +87,7 @@ The database lives at `<repo>/.repo-memory/` and that directory ignores itself, 
 clark is a stdio MCP server. `clark init` prints a registration command for each client; run the one you use.
 
 ```text
-claude mcp add clark -- node "/absolute/path/to/dist/serve.js" "/absolute/path/to/your-repo"
+claude mcp add --scope project clark -- node "/absolute/path/to/dist/serve.js" "/absolute/path/to/your-repo"
 codex mcp add clark -- node "/absolute/path/to/dist/serve.js" "/absolute/path/to/your-repo"
 opencode mcp add clark -- node "/absolute/path/to/dist/serve.js" "/absolute/path/to/your-repo"
 ```
@@ -96,7 +96,7 @@ The part after `--` is identical everywhere; only the client's subcommand differ
 
 **One server per repository.** The repository path is an argument, so each repository needs its own entry.
 
-- **Claude Code** defaults to `local` scope, private to you. `--scope project` writes `.mcp.json` in the repository instead; that file holds absolute paths, so it only works on the machine that generated it, and Claude Code asks you to approve a project-scoped server on first launch.
+- **Claude Code** writes `.mcp.json` in the repository, so the entry stays with the checkout instead of in your home directory. The file holds absolute paths, so a teammate still has to regenerate it, and Claude Code asks you to approve a project-scoped server on first launch.
 - **Codex** writes to one global config, so give each repository a different name: `codex mcp add clark-oxygen -- ...`. Two entries called `clark` replace each other.
 - **OpenCode** writes to the project config by default. `--global` makes the entry available in every project, and then the same naming rule applies.
 

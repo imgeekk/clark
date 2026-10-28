@@ -101,14 +101,16 @@ async function main(): Promise<void> {
 
   const command = buildCommand(servePath, repoRoot);
 
-  console.log(`claude mcp add ${SERVER_NAME} -- ${command}`);
+  console.log(
+    `claude mcp add --scope project ${SERVER_NAME} -- ${command}`,
+  );
   console.log(`codex mcp add ${SERVER_NAME} -- ${command}`);
   console.log(`opencode mcp add ${SERVER_NAME} -- ${command}`);
 
   console.error("");
   console.error("Run the line for your client, then restart it.");
   console.error(
-    "Claude Code defaults to local scope; add --scope project to write .mcp.json in the repository.",
+    "Claude Code asks you to approve a project-scoped server on first launch.",
   );
   console.error(
     "Codex stores servers globally: use a different name per repository, e.g. clark-oxygen.",
