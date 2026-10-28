@@ -123,10 +123,12 @@ function parseArgs(argv: string[]): Options {
 }
 
 async function main(): Promise<void> {
-  loadDotEnv();
   const options = parseArgs(process.argv.slice(2));
-  const apiKey = getApiKey();
   const repoRoot = await resolveRepoRoot(options.repoPath);
+  // The working directory wins, then the target repository fills in the rest.
+  loadDotEnv();
+  loadDotEnv(repoRoot);
+  const apiKey = getApiKey();
   const commits = await readCommits(repoRoot, options.limit, options.offset);
   const kept = commits.filter((commit) => classifyCommit(commit) === null);
 

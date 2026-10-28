@@ -1,5 +1,5 @@
 import { setDefaultResultOrder } from "node:dns";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { GoogleGenAI } from "@google/genai";
 import type { Commit } from "./git.js";
@@ -346,8 +346,54 @@ export function createGeminiClient(apiKey: string): GoogleGenAI {
 export function loadDotEnv(dir = "."): void {
   const envPath = join(dir, ".env");
 
-  if (existsSync(envPath)) {
-    process.loadEnvFile(envPath);
+  if (!existsSync(envPath)) {
+    return;
+  }
+
+  let text: string;
+
+  try {
+    text = readFileSync(envPath, "utf8");
+  } catch {
+    return;
+  }
+
+  // Windows editors often write a BOM. Node's own loader keeps it, which turns
+  // the first key into "\uFEFFGEMINI_API_KEY" and silently hides the key.
+  if (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1);
+  }
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const entry = line.startsWith("export ") ? line.slice(7).trim() : line;
+    const separator = entry.indexOf("=");
+
+    if (separator <= 0) {
+      continue;
+    }
+
+    const key = entry.slice(0, separator).trim();
+    let value = entry.slice(separator + 1).trim();
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    // Real environment variables win over the file.
+    if (!key || process.env[key] !== undefined) {
+      continue;
+    }
+
+    process.env[key] = value;
   }
 }
 
@@ -360,7 +406,7 @@ export function getApiKey(): string {
     throw new Error(
       [
         "GEMINI_API_KEY is not set.",
-        "Create a .env file in the project root with:",
+        "Create a .env file in the repository clark indexes or serves, with:",
         "  GEMINI_API_KEY=your-key",
         "or set the environment variable before running.",
       ].join("\n"),

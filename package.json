@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "tsx --test src/verify.test.ts src/git.test.ts src/embeddings.test.ts src/retrieval.test.ts src/mcp.test.ts",
+    "test": "tsx --test src/verify.test.ts src/git.test.ts src/embeddings.test.ts src/retrieval.test.ts src/mcp.test.ts src/gemini.test.ts",
     "ingest": "tsx src/ingest.ts",
     "extract": "tsx src/extract.ts",
     "index": "tsx src/indexer.ts",
