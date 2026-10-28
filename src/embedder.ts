@@ -1,4 +1,4 @@
-import type { GoogleGenAI } from "@google/genai";
+import type { GeminiClient } from "./gemini.js";
 import {
   countDecisionsMissingEmbeddings,
   getDecisionsMissingEmbeddings,
@@ -26,7 +26,7 @@ export type EmbeddingResult = {
 
 export async function ensureDecisionEmbeddings(
   db: Db,
-  ai: GoogleGenAI,
+  ai: GeminiClient,
   options: Options,
 ): Promise<EmbeddingResult> {
   const missing = getDecisionsMissingEmbeddings(

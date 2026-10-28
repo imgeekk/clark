@@ -1,4 +1,4 @@
-import type { GoogleGenAI } from "@google/genai";
+import type { GeminiClient } from "./gemini.js";
 import {
   getDecisionsForPath,
   getDecisionsForPaths,
@@ -103,7 +103,7 @@ export function rankEmbeddedDecisions(
 
 export async function searchDecisions(
   db: Db,
-  ai: GoogleGenAI,
+  ai: GeminiClient,
   query: string,
   options: { model: string; dim: number; limit: number },
 ): Promise<{ query: string; results: SearchResult[]; note?: string }> {

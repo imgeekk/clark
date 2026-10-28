@@ -1,7 +1,6 @@
 import { setDefaultResultOrder } from "node:dns";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { GoogleGenAI } from "@google/genai";
 import type { Commit } from "./git.js";
 
 // Some networks advertise IPv6 but cannot route it to Google's API hosts.
@@ -333,14 +332,85 @@ export function parseBatchExtraction(
   return results;
 }
 
-export function createGeminiClient(apiKey: string): GoogleGenAI {
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      timeout: 60_000,
-      retryOptions: { attempts: 2, initialDelay: 1, maxDelay: 5, jitter: 0.2 },
-    },
-  });
+// clark calls two REST endpoints. The Google SDK pulled roughly fifty
+// packages (google-auth-library, protobufjs, node-fetch and its polyfills)
+// into every install to wrap them, so the request lives here instead.
+export type GeminiClient = { apiKey: string };
+
+const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const REQUEST_TIMEOUT_MS = 60_000;
+
+export function createGeminiClient(apiKey: string): GeminiClient {
+  return { apiKey };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function postGemini(
+  client: GeminiClient,
+  path: string,
+  body: unknown,
+): Promise<Record<string, unknown>> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) {
+      await delay(1000);
+    }
+
+    let response: Response;
+
+    try {
+      response = await fetch(`${API_BASE}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": client.apiKey,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+
+    const text = await response.text();
+
+    if (!response.ok) {
+      const error = new Error(
+        `Gemini API ${response.status}: ${text.slice(0, 2000)}`,
+      );
+
+      // 429 and 5xx are worth one retry; everything else is a real answer.
+      if (response.status === 429 || response.status >= 500) {
+        lastError = error;
+        continue;
+      }
+
+      throw error;
+    }
+
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error(`Gemini API returned invalid JSON: ${text.slice(0, 500)}`);
+    }
+
+    if (!isRecord(parsed)) {
+      throw new Error("Gemini API returned a non-object response.");
+    }
+
+    return parsed;
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Gemini request failed: ${String(lastError)}`);
 }
 
 export function loadDotEnv(dir = "."): void {
@@ -420,7 +490,7 @@ const QUOTA_PATTERN = /RESOURCE_EXHAUSTED|\b429\b|quota|rate limit/i;
 const AUTH_PATTERN =
   /PERMISSION_DENIED|\b401\b|\b403\b|UNAUTHENTICATED|API_KEY_INVALID|API key not valid/i;
 const NETWORK_PATTERN =
-  /ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up/i;
+  /ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up|timeout|aborted/i;
 
 // Gemini errors arrive as raw JSON or HTTP text. Add one line that says what to
 // do, and leave the original text intact so the cause is still visible.
@@ -443,32 +513,113 @@ export function describeGeminiFailure(error: unknown): string {
 }
 
 async function requestStructured(
-  ai: GoogleGenAI,
+  ai: GeminiClient,
   model: string,
   prompt: string,
   schema: unknown,
 ): Promise<string> {
-  const interaction = await ai.interactions.create({
-    model,
-    input: prompt,
-    response_format: {
-      type: "text",
-      mime_type: "application/json",
-      schema: schema as Record<string, unknown>,
+  const response = await postGemini(
+    ai,
+    `/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: schema,
+      },
     },
-  });
+  );
 
-  const raw = interaction.output_text;
+  const candidates = Array.isArray(response.candidates)
+    ? response.candidates
+    : [];
+  const candidate = candidates[0];
+
+  if (!isRecord(candidate)) {
+    const feedback = isRecord(response.promptFeedback)
+      ? response.promptFeedback.blockReason
+      : undefined;
+
+    throw new Error(
+      typeof feedback === "string"
+        ? `Gemini blocked the request: ${feedback}`
+        : "Model returned no candidates.",
+    );
+  }
+
+  const content = isRecord(candidate.content) ? candidate.content : undefined;
+  const parts = content && Array.isArray(content.parts) ? content.parts : [];
+
+  const raw = parts
+    .filter(
+      (part): part is { text: string } =>
+        isRecord(part) && part.thought !== true && typeof part.text === "string",
+    )
+    .map((part) => part.text)
+    .join("");
 
   if (!raw) {
-    throw new Error("Model returned no output_text.");
+    const reason =
+      typeof candidate.finishReason === "string"
+        ? candidate.finishReason
+        : "unknown";
+    throw new Error(`Model returned no text (finishReason: ${reason}).`);
   }
 
   return raw;
 }
 
+export async function embedContents(
+  ai: GeminiClient,
+  model: string,
+  texts: string[],
+  taskType: "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY",
+  dim: number,
+): Promise<number[][]> {
+  const response = await postGemini(
+    ai,
+    `/models/${encodeURIComponent(model)}:batchEmbedContents`,
+    {
+      requests: texts.map((text) => ({
+        model: `models/${model}`,
+        content: { parts: [{ text }] },
+        taskType,
+        outputDimensionality: dim,
+      })),
+    },
+  );
+
+  const embeddings = Array.isArray(response.embeddings)
+    ? response.embeddings
+    : [];
+
+  if (embeddings.length !== texts.length) {
+    throw new Error(
+      `Embedding count mismatch: expected ${texts.length}, got ${embeddings.length}.`,
+    );
+  }
+
+  return embeddings.map((embedding, index) => {
+    const values =
+      isRecord(embedding) && Array.isArray(embedding.values)
+        ? embedding.values
+        : [];
+
+    if (
+      values.length !== dim ||
+      !values.every((value) => typeof value === "number")
+    ) {
+      throw new Error(
+        `Embedding ${index} has ${values.length} dimensions, expected ${dim}.`,
+      );
+    }
+
+    return values as number[];
+  });
+}
+
 export function requestSingleExtraction(
-  ai: GoogleGenAI,
+  ai: GeminiClient,
   model: string,
   commit: Commit,
   diff: string,
@@ -482,7 +633,7 @@ export function requestSingleExtraction(
 }
 
 export function requestBatchExtraction(
-  ai: GoogleGenAI,
+  ai: GeminiClient,
   model: string,
   items: BatchItem[],
 ): Promise<string> {

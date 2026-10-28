@@ -1,4 +1,4 @@
-import type { GoogleGenAI } from "@google/genai";
+import { embedContents, type GeminiClient } from "./gemini.js";
 
 export const DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001";
 export const DEFAULT_EMBEDDING_DIM = 768;
@@ -23,7 +23,7 @@ export function decisionEmbeddingText(decision: DecisionText): string {
 }
 
 async function embedTexts(
-  ai: GoogleGenAI,
+  ai: GeminiClient,
   model: string,
   texts: string[],
   dim: number,
@@ -33,38 +33,12 @@ async function embedTexts(
     return [];
   }
 
-  const response = await ai.models.embedContent({
-    model,
-    contents: texts,
-    config: {
-      taskType,
-      outputDimensionality: dim,
-    },
-  });
-
-  const embeddings = response.embeddings ?? [];
-
-  if (embeddings.length !== texts.length) {
-    throw new Error(
-      `Embedding count mismatch: expected ${texts.length}, got ${embeddings.length}.`,
-    );
-  }
-
-  return embeddings.map((embedding, index) => {
-    const values = embedding.values;
-
-    if (!values || values.length !== dim) {
-      throw new Error(
-        `Embedding ${index} has ${values?.length ?? 0} dimensions, expected ${dim}.`,
-      );
-    }
-
-    return normalizeEmbedding(values);
-  });
+  const vectors = await embedContents(ai, model, texts, taskType, dim);
+  return vectors.map(normalizeEmbedding);
 }
 
 export function embedDocuments(
-  ai: GoogleGenAI,
+  ai: GeminiClient,
   model: string,
   texts: string[],
   dim = DEFAULT_EMBEDDING_DIM,
@@ -73,7 +47,7 @@ export function embedDocuments(
 }
 
 export async function embedQuery(
-  ai: GoogleGenAI,
+  ai: GeminiClient,
   model: string,
   query: string,
   dim = DEFAULT_EMBEDDING_DIM,

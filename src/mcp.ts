@@ -1,12 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import type { Db } from "./db.js";
 import {
   DEFAULT_EMBEDDING_DIM,
   DEFAULT_EMBEDDING_MODEL,
 } from "./embeddings.js";
-import { createGeminiClient, getApiKey } from "./gemini.js";
+import {
+  createGeminiClient,
+  getApiKey,
+  type GeminiClient,
+} from "./gemini.js";
 import {
   checkChange,
   searchDecisions,
@@ -38,9 +41,9 @@ export function createMcpServer(db: Db): McpServer {
     version: "0.1.0",
   });
 
-  let ai: GoogleGenAI | undefined;
+  let ai: GeminiClient | undefined;
 
-  const getAi = (): GoogleGenAI => {
+  const getAi = (): GeminiClient => {
     if (!ai) {
       ai = createGeminiClient(getApiKey());
     }
